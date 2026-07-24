@@ -1,16 +1,30 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const port = 4317 + (process.pid % 1000);
+  const nextCli = fileURLToPath(new URL("../node_modules/next/dist/bin/next", import.meta.url));
+  const server = spawn(process.execPath, [nextCli, "start", "-p", String(port)], {
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+    stdio: "ignore",
+  });
 
-  return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
+  try {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        const response = await fetch(`http://localhost:${port}/`);
+        if (response.status === 200) return response;
+      } catch {
+        // The server may need a moment to start.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error("Next production server did not start in time");
+  } finally {
+    server.kill();
+  }
 }
 
 test("renderiza a página inicial da Pousada Lua Rosa", async () => {
